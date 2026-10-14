@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#312e81">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Boussole">
+<title>Boussole</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="favicon.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<script src="config.js"></script>
+<style>
+  :root { --bg:#1e1b4b; --fg:#fff; --accent:#ff7a59; --violet:#a855f7; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--fg); font-family:'Sansation','Segoe UI',system-ui,sans-serif; overflow:hidden; }
+  #app { position:fixed; inset:0; width:100%; height:100%; border:0; background:#f3f4fb; opacity:0; transition:opacity .4s; }
+  #app.ready { opacity:1; }
+  #splash { position:fixed; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:18px; text-align:center; padding:24px;
+    background:radial-gradient(900px 500px at 10% 0%,#7c3aed55,transparent),radial-gradient(700px 400px at 100% 100%,#ff7a5944,transparent),linear-gradient(160deg,#1e1b4b,#312e81 55%,#4c1d95); transition:opacity .4s; z-index:5; }
+  #splash.hide { opacity:0; pointer-events:none; }
+  #splash img { width:104px; height:104px; border-radius:28px; box-shadow:0 18px 40px -10px rgba(255,122,89,.6); animation:pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 50% { transform:scale(1.06); } }
+  #splash h1 { margin:0; font-size:2rem; letter-spacing:.5px; }
+  #splash p { margin:0; opacity:.8; }
+  .bar { width:160px; height:4px; border-radius:4px; background:rgba(255,255,255,.18); overflow:hidden; }
+  .bar i { display:block; height:100%; width:40%; background:linear-gradient(90deg,var(--accent),var(--violet)); animation:load 1.2s ease-in-out infinite; }
+  @keyframes load { 0% { transform:translateX(-100%); } 100% { transform:translateX(260%); } }
+  .msg { max-width:420px; background:rgba(255,255,255,.12); border-radius:16px; padding:14px 18px; line-height:1.5; font-size:.95rem; }
+  .btn { border:0; cursor:pointer; font:inherit; font-weight:700; color:#fff; padding:12px 20px; border-radius:14px; background:linear-gradient(135deg,var(--accent),var(--violet)); box-shadow:0 10px 24px -10px rgba(255,122,89,.7); }
+  .btn.ghost { background:rgba(255,255,255,.16); box-shadow:none; }
+  #pill { position:fixed; z-index:10; left:50%; transform:translateX(-50%); bottom:calc(16px + env(safe-area-inset-bottom,0px)); display:none; align-items:center; gap:10px;
+    background:#1e1b4b; color:#fff; padding:10px 12px 10px 16px; border-radius:18px; box-shadow:0 14px 40px -10px rgba(0,0,0,.5); font-size:.9rem; max-width:calc(100% - 32px); }
+  #pill.show { display:flex; }
+  #pill .btn { padding:8px 14px; border-radius:12px; font-size:.85rem; }
+  #pill .x { background:none; border:0; color:#fff; opacity:.7; font-size:1.1rem; cursor:pointer; }
+</style>
+</head>
+<body>
+<div id="splash">
+  <img src="icon-512.png" alt="">
+  <h1>Boussole</h1>
+  <p>Garder le cap, chaque jour</p>
+  <div class="bar" id="bar"><i></i></div>
+  <div id="note"></div>
+</div>
+<iframe id="app" title="Boussole" allow="camera *; microphone *; clipboard-write *; fullscreen *; autoplay *; geolocation *"></iframe>
+<div id="pill" role="status"><span id="pilltxt"></span><button class="btn" id="pillbtn"></button><button class="x" id="pillx" aria-label="Fermer">✕</button></div>
+
+<script>
+(function () {
+  const URL_APP = (window.BOUSSOLE_URL || '').trim();
+  const splash = document.getElementById('splash'), frame = document.getElementById('app'), note = document.getElementById('note'), bar = document.getElementById('bar');
+  const standalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+  const store = { get: k => { try { return localStorage.getItem(k); } catch (e) { return null; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} } };
+
+  /* 1. Rendre l'appli installable (service worker) */
+  let swReg = null;
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').then(r => { swReg = r; }).catch(() => {});
+
+  /* 2. Lien pas encore réglé */
+  if (!/^https:\/\/script\.google(usercontent)?\.com\/.+/.test(URL_APP)) {
+    bar.style.display = 'none';
+    note.innerHTML = '<div class="msg">⚙️ <b>Encore une étape :</b> ouvre le fichier <b>config.js</b> et colle le lien de ton appli Apps Script (celui qui se termine par <b>/exec</b>).</div>';
+    return;
+  }
+
+  /* 3. Charger Boussole dans la fenêtre de l'appli */
+  const show = () => { frame.classList.add('ready'); splash.classList.add('hide'); };
+  frame.addEventListener('load', () => setTimeout(show, 300));
+  const SRC = URL_APP + (URL_APP.indexOf('?') >= 0 ? '&' : '?') + 'app=1';
+  frame.src = SRC;
+  setTimeout(() => { if (!frame.classList.contains('ready')) note.innerHTML = '<div class="msg">La connexion est lente… Boussole arrive.</div>'; }, 7000);
+  if (!navigator.onLine) { bar.style.display = 'none'; note.innerHTML = '<div class="msg">📶 Pas de connexion Internet. Boussole s\'ouvrira dès que le réseau revient.</div>'; }
+  window.addEventListener('online', () => { if (!frame.classList.contains('ready')) frame.src = SRC; });
+
+  /* 4. Petite bulle en bas : installer l'appli / activer les rappels */
+  const pill = document.getElementById('pill'), txt = document.getElementById('pilltxt'), btn = document.getElementById('pillbtn');
+  let action = null;
+  const ask = (t, b, fn) => { txt.textContent = t; btn.textContent = b; action = fn; pill.classList.add('show'); };
+  document.getElementById('pillx').onclick = () => { pill.classList.remove('show'); store.set('boussole_pill_' + (action && action.key), '1'); };
+  btn.onclick = () => { if (action) action(); };
+
+  let deferred = null;
+  window.addEventListener('beforeinstallprompt', e => {
+    e.preventDefault(); deferred = e;
+    const f = () => { deferred.prompt(); deferred.userChoice.finally(() => { deferred = null; pill.classList.remove('show'); }); }; f.key = 'install';
+    if (!standalone) ask('📲 Installe Boussole comme une vraie appli', 'Installer', f);
+  });
+  const isiOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  if (isiOS && !standalone && !store.get('boussole_pill_ios')) { const f = () => pill.classList.remove('show'); f.key = 'ios'; ask('📲 Pour installer : bouton Partager ⬆️ puis « Sur l\'écran d\'accueil »', 'OK', f); }
+
+  const notifAsk = () => {
+    if (!('Notification' in window) || Notification.permission !== 'default' || store.get('boussole_pill_notif')) return;
+    const f = () => Notification.requestPermission().finally(() => pill.classList.remove('show')); f.key = 'notif';
+    ask('🔔 Active les rappels sur cet appareil', 'Activer', f);
+  };
+  if (standalone) setTimeout(notifAsk, 4000);
+
+  /* 5. Relais des rappels : Boussole (dans la fenêtre) demande une notification système */
+  window.addEventListener('message', e => {
+    const d = e.data || {};
+    if (!d.boussole) return;
+    if (d.boussole === 'notify') {
+      try { if (navigator.vibrate) navigator.vibrate([300, 150, 300, 150, 300]); } catch (x) {}
+      if ('Notification' in window && Notification.permission === 'granted') {
+        const opts = { body: d.body || '', icon: 'icon-192.png', badge: 'icon-192.png', tag: d.tag || d.title, renotify: true, requireInteraction: true, vibrate: [300, 150, 300] };
+        (swReg && swReg.showNotification ? swReg.showNotification(d.title, opts) : Promise.reject()).catch(() => { try { new Notification(d.title, opts); } catch (x) {} });
+      } else { notifAsk(); }
+    }
+    if (d.boussole === 'askNotif') { store.set('boussole_pill_notif', ''); notifAsk(); }
+    if (d.boussole === 'ready') show();
+  });
+})();
+</script>
+</body>
+</html>
