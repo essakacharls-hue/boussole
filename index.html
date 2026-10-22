@@ -36,6 +36,20 @@
   #pill.show { display:flex; }
   #pill .btn { padding:8px 14px; border-radius:12px; font-size:.85rem; }
   #pill .x { background:none; border:0; color:#fff; opacity:.7; font-size:1.1rem; cursor:pointer; }
+  /* Enregistreur et dictee du lanceur (le micro est autorise ici, pas dans la page Google) */
+  #rec { position:fixed; inset:0; z-index:20; display:none; align-items:center; justify-content:center; background:rgba(15,16,32,.55); backdrop-filter:blur(3px); padding:16px; }
+  #rec.show { display:flex; }
+  #rec .box { width:100%; max-width:360px; background:#fff; color:#1b1e33; border-radius:24px; padding:26px 22px; text-align:center; box-shadow:0 30px 60px -20px rgba(0,0,0,.5); }
+  #rec .mic { width:84px; height:84px; margin:0 auto 10px; border-radius:50%; display:grid; place-items:center; font-size:2.2rem; background:linear-gradient(135deg,#ef4444,#ff7a59); animation:micp 1.4s infinite; }
+  @keyframes micp { 0% { box-shadow:0 0 0 0 rgba(239,68,68,.55); } 70% { box-shadow:0 0 0 22px rgba(239,68,68,0); } 100% { box-shadow:0 0 0 0 rgba(239,68,68,0); } }
+  #rec .t { font-size:2.2rem; font-weight:700; font-variant-numeric:tabular-nums; margin:6px 0; }
+  #rec .sub { color:#6c7192; font-size:.9rem; margin:0 0 6px; }
+  #rec .live { min-height:48px; background:#f3f4fb; border-radius:14px; padding:10px 12px; margin:10px 0; text-align:left; font-size:.95rem; line-height:1.4; }
+  #rec .bars { display:flex; gap:3px; align-items:flex-end; justify-content:center; height:36px; margin:8px 0 14px; }
+  #rec .bars i { width:5px; height:15%; border-radius:3px; background:linear-gradient(#ff7a59,#a855f7); transition:height .08s; }
+  #rec .row { display:flex; gap:10px; justify-content:center; }
+  #rec .btn2 { border:0; cursor:pointer; font:inherit; font-weight:700; padding:12px 18px; border-radius:14px; background:#eef0fb; color:#1b1e33; }
+  #rec .btn2.pri { background:linear-gradient(135deg,#6d5dfc,#a855f7); color:#fff; }
 </style>
 </head>
 <body>
@@ -47,6 +61,7 @@
   <div id="note"></div>
 </div>
 <iframe id="app" title="Boussole" allow="camera *; microphone *; clipboard-write *; fullscreen *; autoplay *; geolocation *"></iframe>
+<div id="rec" role="dialog" aria-modal="true"><div class="box" id="recbox"></div></div>
 <div id="pill" role="status"><span id="pilltxt"></span><button class="btn" id="pillbtn"></button><button class="x" id="pillx" aria-label="Fermer">✕</button></div>
 
 <script>
@@ -72,7 +87,9 @@
   frame.addEventListener('load', () => setTimeout(show, 300));
   const SRC = URL_APP + (URL_APP.indexOf('?') >= 0 ? '&' : '?') + 'app=1';
   frame.src = SRC;
-  setTimeout(() => { if (!frame.classList.contains('ready')) note.innerHTML = '<div class="msg">La connexion est lente… Boussole arrive.</div>'; }, 7000);
+  // Message seulement si l'ouverture prend VRAIMENT longtemps (réseau faible)
+  setTimeout(() => { if (!frame.classList.contains('ready')) note.innerHTML = '<div class="msg">📶 Le réseau est faible… Boussole arrive.</div>'; }, 15000);
+  setTimeout(() => { if (!frame.classList.contains('ready')) note.innerHTML = '<div class="msg">📶 Le réseau est très faible.<br><button class="btn ghost" onclick="location.reload()" style="margin-top:10px">Réessayer</button></div>'; }, 45000);
   if (!navigator.onLine) { bar.style.display = 'none'; note.innerHTML = '<div class="msg">📶 Pas de connexion Internet. Boussole s\'ouvrira dès que le réseau revient.</div>'; }
   window.addEventListener('online', () => { if (!frame.classList.contains('ready')) frame.src = SRC; });
 
@@ -112,7 +129,59 @@
     }
     if (d.boussole === 'askNotif') { store.set('boussole_pill_notif', ''); notifAsk(); }
     if (d.boussole === 'ready') show();
+    if (d.boussole === 'rec') { reply(e, { boussole: 'recAck', rid: d.rid }); startRec(e, d); }
+    if (d.boussole === 'dict') { reply(e, { boussole: 'dictAck', rid: d.rid }); startDict(e, d); }
   });
+
+  /* 6. Micro : enregistrement et dictée faits ICI, puis renvoyés à Boussole.
+     (On n'ouvre jamais l'enregistreur du téléphone : Android fermerait l'appli.) */
+  const recEl = document.getElementById('rec'), recBox = document.getElementById('recbox');
+  const reply = (e, m) => { try { e.source.postMessage(m, '*'); } catch (x) {} };
+  const esc = t => String(t || '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+  const mmss = s => String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
+  const closeRec = () => { recEl.classList.remove('show'); recBox.innerHTML = ''; };
+  let REC = null;
+  function startRec(e, d) {
+    if (REC) return reply(e, { boussole: 'recResult', rid: d.rid, err: 'busy' });
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) return reply(e, { boussole: 'recResult', rid: d.rid, err: 'nomic' });
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+      const mime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'].find(m => MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m)) || '';
+      const rec = new MediaRecorder(stream, mime ? { mimeType: mime, audioBitsPerSecond: 32000 } : undefined), chunks = [], t0 = Date.now();
+      REC = { rec, cancel: false };
+      recBox.innerHTML = '<div class="mic">🎙️</div><p class="sub">' + esc(d.titre || 'Enregistrement en cours…') + '</p><div class="t" id="rect">00:00</div><div class="bars">' + '<i></i>'.repeat(18) + '</div>'
+        + '<div class="row"><button class="btn2" id="recx">✕ Annuler</button><button class="btn2 pri" id="recok">⏹️ Arrêter</button></div><p class="sub" style="margin-top:12px">3 minutes maximum</p>';
+      recEl.classList.add('show');
+      document.getElementById('recx').onclick = () => { REC.cancel = true; rec.stop(); };
+      document.getElementById('recok').onclick = () => rec.stop();
+      let ctx = null, raf = 0;
+      try { const C = window.AudioContext || window.webkitAudioContext; ctx = new C(); const an = ctx.createAnalyser(); an.fftSize = 64; ctx.createMediaStreamSource(stream).connect(an);
+        const buf = new Uint8Array(an.frequencyBinCount), bars = recBox.querySelectorAll('.bars i');
+        const loop = () => { an.getByteFrequencyData(buf); bars.forEach((b, i) => { b.style.height = (12 + buf[(i * 2) % buf.length] / 255 * 88) + '%'; }); raf = requestAnimationFrame(loop); }; loop(); } catch (x) {}
+      const timer = setInterval(() => { const s = Math.round((Date.now() - t0) / 1000), el = document.getElementById('rect'); if (el) el.textContent = mmss(s); if (s >= 180) rec.stop(); }, 250);
+      rec.ondataavailable = ev => { if (ev.data && ev.data.size) chunks.push(ev.data); };
+      rec.onstop = () => {
+        clearInterval(timer); cancelAnimationFrame(raf); stream.getTracks().forEach(t => t.stop()); try { ctx && ctx.close(); } catch (x) {}
+        const cancel = REC.cancel, dur = Math.max(1, Math.round((Date.now() - t0) / 1000)); REC = null; closeRec();
+        if (cancel || !chunks.length) return reply(e, { boussole: 'recResult', rid: d.rid, err: 'cancel' });
+        const fr = new FileReader(); fr.onload = () => reply(e, { boussole: 'recResult', rid: d.rid, data: fr.result, dur });
+        fr.readAsDataURL(new Blob(chunks, { type: (rec.mimeType || 'audio/webm').split(';')[0] }));
+      };
+      rec.start(250);
+    }).catch(err => reply(e, { boussole: 'recResult', rid: d.rid, err: err && err.name === 'NotAllowedError' ? 'denied' : 'nomic' }));
+  }
+  function startDict(e, d) {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) return reply(e, { boussole: 'dictEnd', rid: d.rid, err: 'nosupport' });
+    const r = new SR(); r.lang = 'fr-FR'; r.interimResults = true; r.maxAlternatives = 1; let err = '';
+    recBox.innerHTML = '<div class="mic">🗣️</div><b>Je t’écoute…</b><p class="sub">Parle normalement, en français</p><div class="live" id="dlive"></div><div class="row"><button class="btn2 pri" id="dok">✓ Terminé</button></div>';
+    recEl.classList.add('show');
+    document.getElementById('dok').onclick = () => { try { r.stop(); } catch (x) {} };
+    r.onresult = ev => { const all = Array.from(ev.results), text = all.map(x => x[0].transcript).join(' ').replace(/\s+/g, ' ').trim(); const l = document.getElementById('dlive'); if (l) l.textContent = text;
+      reply(e, { boussole: 'dictRes', rid: d.rid, text, final: all.every(x => x.isFinal) }); };
+    r.onerror = ev => { err = ev.error === 'not-allowed' || ev.error === 'service-not-allowed' ? 'denied' : ev.error === 'no-speech' ? 'nospeech' : ev.error === 'aborted' ? '' : 'x'; };
+    r.onend = () => { closeRec(); reply(e, { boussole: 'dictEnd', rid: d.rid, err }); };
+    try { r.start(); } catch (x) { closeRec(); reply(e, { boussole: 'dictEnd', rid: d.rid, err: 'x' }); }
+  }
 })();
 </script>
 </body>
