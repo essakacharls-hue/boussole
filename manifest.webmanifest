@@ -2,7 +2,7 @@
   "name": "Boussole — Garder le cap, chaque jour",
   "short_name": "Boussole",
   "description": "Agenda, to-do, habitudes, bien-être et tâches des enfants.",
-  "id": "./",
+  "id": "./?app=boussole",
   "start_url": "./?source=app",
   "scope": "./",
   "display": "standalone",
