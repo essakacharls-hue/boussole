@@ -97,7 +97,7 @@
   const pill = document.getElementById('pill'), txt = document.getElementById('pilltxt'), btn = document.getElementById('pillbtn');
   let action = null;
   const ask = (t, b, fn) => { txt.textContent = t; btn.textContent = b; action = fn; pill.classList.add('show'); };
-  document.getElementById('pillx').onclick = () => { pill.classList.remove('show'); store.set('boussole_pill_' + (action && action.key), '1'); };
+  document.getElementById('pillx').onclick = () => { pill.classList.remove('show'); if (action && action.key !== 'notif') store.set('boussole_pill_' + action.key, '1'); };
   btn.onclick = () => { if (action) action(); };
 
   let deferred = null;
@@ -109,12 +109,28 @@
   const isiOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
   if (isiOS && !standalone && !store.get('boussole_pill_ios')) { const f = () => pill.classList.remove('show'); f.key = 'ios'; ask('📲 Pour installer : bouton Partager ⬆️ puis « Sur l\'écran d\'accueil »', 'OK', f); }
 
-  const notifAsk = () => {
-    if (!('Notification' in window) || Notification.permission !== 'default' || store.get('boussole_pill_notif')) return;
-    const f = () => Notification.requestPermission().finally(() => pill.classList.remove('show')); f.key = 'notif';
+  /* Notifications : on ne redemande JAMAIS si c'est déjà autorisé ; si c'est refusé, on explique où l'activer.
+     Sans réponse claire, on ne repropose la bulle qu'une fois par semaine. */
+  let appWin = null;
+  const notifState = () => !('Notification' in window) ? 'none' : Notification.permission;
+  const tellApp = () => { if (appWin) try { appWin.postMessage({ boussole: 'notifState', state: notifState() }, '*'); } catch (x) {} };
+  const WEEK = 7 * 86400000;
+  const notifAsk = force => {
+    const st = notifState();
+    if (st === 'granted' || st === 'none') return tellApp();
+    if (st === 'denied') {
+      if (!force) return;
+      const f = () => pill.classList.remove('show'); f.key = 'notifhelp';
+      return ask(isAndroid ? '🔕 Rappels bloqués : Paramètres du téléphone › Applications › Boussole › Notifications › Autoriser' : '🔕 Rappels bloqués : clique 🔒 à gauche de l’adresse › Notifications › Autoriser', 'OK', f);
+    }
+    if (!force && Date.now() - (+store.get('boussole_notif_asked') || 0) < WEEK) return;
+    store.set('boussole_notif_asked', String(Date.now()));
+    const f = () => Notification.requestPermission().then(tellApp).finally(() => pill.classList.remove('show')); f.key = 'notif';
     ask('🔔 Active les rappels sur cet appareil', 'Activer', f);
   };
-  if (standalone) setTimeout(notifAsk, 4000);
+  const isAndroid = /android/i.test(navigator.userAgent);
+  if (standalone) setTimeout(() => notifAsk(false), 4000);
+  try { navigator.permissions.query({ name: 'notifications' }).then(p => { p.onchange = () => { tellApp(); if (notifState() === 'granted') pill.classList.remove('show'); }; }); } catch (x) {}
 
   /* 5. Relais des rappels : Boussole (dans la fenêtre) demande une notification système */
   window.addEventListener('message', e => {
@@ -125,10 +141,12 @@
       if ('Notification' in window && Notification.permission === 'granted') {
         const opts = { body: d.body || '', icon: 'icon-192.png', badge: 'icon-192.png', tag: d.tag || d.title, renotify: true, requireInteraction: true, vibrate: [300, 150, 300] };
         (swReg && swReg.showNotification ? swReg.showNotification(d.title, opts) : Promise.reject()).catch(() => { try { new Notification(d.title, opts); } catch (x) {} });
-      } else { notifAsk(); }
+      }
     }
-    if (d.boussole === 'askNotif') { store.set('boussole_pill_notif', ''); notifAsk(); }
-    if (d.boussole === 'ready') show();
+    appWin = e.source || appWin;
+    if (d.boussole === 'askNotif') notifAsk(true);
+    if (d.boussole === 'notifState?') tellApp();
+    if (d.boussole === 'ready') { show(); tellApp(); }
     if (d.boussole === 'rec') { reply(e, { boussole: 'recAck', rid: d.rid }); startRec(e, d); }
     if (d.boussole === 'dict') { reply(e, { boussole: 'dictAck', rid: d.rid }); startDict(e, d); }
   });

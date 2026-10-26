@@ -1,6 +1,6 @@
 /* Boussole — service worker : rend l'appli installable, garde le lanceur hors ligne
    et affiche les notifications de rappel. */
-const CACHE = 'boussole-dibao-v3';   // changer ce numéro à chaque nouvelle version du lanceur
+const CACHE = 'boussole-dibao-v4';   // changer ce numéro à chaque nouvelle version du lanceur
 const SHELL = ['./', './index.html', './config.js', './manifest.webmanifest', './icon-192.png', './icon-512.png', './icon-maskable-512.png', './apple-touch-icon.png', './favicon.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k.indexOf('boussole') === 0 && k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim())); });
